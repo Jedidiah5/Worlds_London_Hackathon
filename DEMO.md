@@ -13,7 +13,10 @@ while they play — do not narrate the architecture until they ask.
 - **Click the scene once** to capture the mouse before handing it over, so their
   first mouse movement actually turns the camera.
 - Debug panel **off** (`` ` `` toggles it).
-- One rehearsal run done end to end.
+- **Sound on and audible.** The room tone, footsteps and the key chime do a lot
+  of the atmospheric work — check the laptop volume before a judge arrives.
+- One rehearsal run done end to end. Leave a minute's gap before the next
+  restart so you are not rate-limited when they walk over.
 - Know your escape hatch: if the session dies, `R` or **TRY AGAIN** restarts
   cleanly. Say "the building does that" and restart. Do not open dev tools in
   front of a judge.
@@ -75,6 +78,11 @@ If they don't find it: hit `` ` `` → **grant key** → **escape now**, and say
 - **"Every GPU is busy":** it is queueing, not broken. Say so — "Reactor's
   capacity is hammered today, it's waiting in line" — and keep talking. This is
   the single most likely failure, so have a sentence ready for it.
+- **"Too many sessions this minute":** Reactor caps you at 10 new sessions a
+  minute. It waits it out on its own. **Do not restart repeatedly while
+  rehearsing** or you will walk up to a judge already rate-limited.
+- **Sound didn't start:** the browser needs a click before audio is allowed, and
+  WAKE UP is that click. If you skipped it somehow, restart the run.
 - **Session drops:** `R` or **TRY AGAIN**. "The building does that."
 - **The camera tilts at the floor or the geometry melts:** that is *in theme*.
   Say "loop four gets strange" and keep going. Do not apologise for the model

@@ -77,11 +77,18 @@ permission prompt, which is why it is behind a button rather than on by default.
 
 ## Reactor capacity — read this before demoing
 
-Reactor returns `429 no available capacity` when every GPU is busy, and during
-the hackathon that happens often. The app treats it as a queue, not a failure:
-it retries every 3s up to 40 times and shows *"Every GPU is busy. Queueing for
-one…"* on the boot screen. If it still can't get a slot, the error screen says
-so in plain language with a **TRY AGAIN** button.
+Reactor throws `429` for two different reasons and the app handles them apart:
+
+- **`no available capacity`** — every GPU is busy. It queues, retrying every 3s
+  up to 40 times, showing *"Every GPU is busy. Queueing for one…"*.
+- **`quota_exceeded / sessions_per_minute`** — **you only get 10 new sessions a
+  minute on this model.** The response carries `retry_after_seconds`, which the
+  app now honours rather than hammering (retrying too eagerly just keeps the
+  quota pinned). The boot screen counts the wait down.
+
+That per-minute cap is the one to remember: restarting repeatedly while
+rehearsing will hit it, and it looks like a mystery failure if you don't know.
+The error screen names it explicitly.
 
 Practically: **start the session a minute or two before a judge arrives** and
 leave it running. Once connected, the loop resets reuse the same session, so
@@ -164,6 +171,49 @@ So the token is cached in module scope in `components/LoopHouse.tsx` and
 explicitly invalidated with `invalidateToken()` immediately before each
 `connect()`. The route sends `Cache-Control: private, no-store` so the browser
 never second-guesses that. One token per session, a new token per session.
+
+### Sound
+
+Everything is synthesised in the browser in `lib/audio.ts` — there are no audio
+files to license, load, or 404 on Vercel, and the whole bed follows the decay
+arc by moving a few numbers:
+
+- **Room tone** is brown noise through a lowpass plus two detuned oscillators.
+  Each loop variation darkens the filter, drops the drone, and widens the
+  detune, so by the overgrown loop the building is humming against itself.
+- **Footsteps** are a bandpassed noise burst (heel) plus a pitched-down sine
+  (weight), alternating heavier and lighter so it reads as left/right. The step
+  interval follows the pace setting, and they stop the instant you hit a wall.
+- **Events** have their own voices: a filtered sweep for the drawer, a metallic
+  three-partial chime for the key, a filter-collapsing swell for the loop reset,
+  and a rising wash that ducks the building for the escape.
+
+An `AudioContext` cannot start without a user gesture, so it is created inside
+the WAKE UP click. Sound and volume are both in settings.
+
+### Walking like a person
+
+Two problems the first version had: the camera sank toward the floor while
+moving, and the walk felt like a dolly. Both are fixed through the camera pose,
+where **the translation axis is y-down** (a negative `ty` lifts):
+
+- `EYE_LIFT` is a constant upward nudge that cancels the sink.
+- A sine across the chunk's latents gives the gait an actual bob, with a little
+  roll on the same phase so it sways as well as bounces. Amplitude scales with
+  pace. Turn it off with **Head bob** in settings.
+
+The prompt carries the rest — each pace level describes footfalls, weight
+shifting and arm swing, because "walking" is the only speed control the model
+has. The camera contract now also states that height is constant and that
+walking changes position, never height.
+
+### The floor
+
+The model would occasionally drop the ground out of the world entirely. The
+continuity rules now spell out that there is *always* a complete, solid,
+continuous floor running unbroken to the base of every wall, that it never opens
+into a hole, void, water or darkness, and that the bottom of the frame is always
+ground.
 
 ### Movement speed, and what it costs
 

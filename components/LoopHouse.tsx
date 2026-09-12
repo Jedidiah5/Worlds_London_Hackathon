@@ -15,6 +15,7 @@ import {
   STALL_SAMPLES,
   STALL_THRESHOLD,
 } from "@/lib/frames";
+import { createAudioEngine, type EngineHandle } from "@/lib/audio";
 import { currentHint, wakeHint } from "@/lib/hints";
 import {
   DEFAULT_SETTINGS,
@@ -40,10 +41,16 @@ import {
 const API_URL =
   process.env.NEXT_PUBLIC_COORDINATOR_URL ?? "https://api.reactor.inc";
 const CHUNK_LATENTS = 3;
-// Forward translation added per pace step above 1. Deliberately small: the
-// prompt does most of the work, and physically shoving the camera makes the
-// world drift away from the anchor faster. Raise with care.
-const MOVE_PUSH_PER_STEP = 0.04;
+// Forward translation added per pace step above 1. The prompt does most of the
+// work; this is the part you feel. Raising it also drifts off the anchor faster.
+const MOVE_PUSH_PER_STEP = 0.055;
+// Constant upward nudge (y is down) that cancels the model's tendency to sink
+// toward the floor while walking.
+const EYE_LIFT = 0.014;
+// Gait bob amplitude and how fast the phase advances per latent frame.
+const BOB_BASE = 0.006;
+const BOB_PER_PACE = 0.0035;
+const BOB_STEP = 0.9;
 
 type MoveLong = "idle" | "forward" | "back";
 type MoveLat = "idle" | "strafe_left" | "strafe_right";
@@ -156,8 +163,39 @@ function isCapacityError(error: unknown): boolean {
   return (
     message.includes("429") ||
     message.toLowerCase().includes("no available capacity") ||
-    message.toLowerCase().includes("no available servers")
+    message.toLowerCase().includes("no available servers") ||
+    message.toLowerCase().includes("quota_exceeded")
   );
+}
+
+// Reactor rejects with 429 for two different reasons and they want different
+// handling: "no available capacity" means every GPU is busy and we just wait,
+// while "quota_exceeded / sessions_per_minute" is a rate limit that tells us
+// exactly how long to back off. Retrying the rate limit too eagerly keeps the
+// quota pinned, so honour retry_after_seconds when it is offered.
+function parseRetryAfterMs(error: unknown): number | null {
+  const message = error instanceof Error ? error.message : String(error);
+  // [\s\S] instead of the /s flag, which needs an ES2018 target.
+  const match = message.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    const payload = JSON.parse(match[0]) as {
+      retry_after_seconds?: number;
+      quota_type?: string;
+    };
+    if (typeof payload.retry_after_seconds === "number") {
+      // Pad it: the server's own clock and ours will not agree exactly.
+      return Math.ceil(payload.retry_after_seconds * 1000) + 1200;
+    }
+  } catch {
+    // Not JSON; fall back to the fixed interval.
+  }
+  return null;
+}
+
+function isRateLimit(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("quota_exceeded") || message.includes("sessions_per_minute");
 }
 
 // The WebRTC transport to the GPU can drop while a session is coming up —
@@ -249,11 +287,21 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
   const promptInFlightRef = useRef(false);
   const attnRef = useRef<"small" | "large">("small");
   const lastRotationSpeedRef = useRef(-1);
-  const effectivePaceRef = useRef<1 | 2 | 3>(DEFAULT_SETTINGS.moveSpeed);
+  const effectivePaceRef = useRef<1 | 2 | 3 | 4>(DEFAULT_SETTINGS.moveSpeed);
   const movePoseActiveRef = useRef(false);
+  const bobPhaseRef = useRef(0);
 
   const samplerRef = useRef<ReturnType<typeof createFrameSampler> | null>(null);
   const stallCountRef = useRef(0);
+
+  // Audio. The context can only be created from a user gesture, so it is
+  // started on the WAKE UP click rather than on mount.
+  const audioRef = useRef<EngineHandle | null>(null);
+  const getAudio = useCallback(() => {
+    if (!audioRef.current) audioRef.current = createAudioEngine();
+    return audioRef.current;
+  }, []);
+  useEffect(() => () => audioRef.current?.stop(), []);
 
   const playing = game.phase === "loop";
   const look = useLookInput({
@@ -424,19 +472,36 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     if (statusRef.current !== "ready" || gameRef.current.phase !== "loop") return;
     const pace = effectivePaceRef.current;
     const forward = lastMoveLongRef.current;
-    const push = pace === 1 ? 0 : (pace - 1) * MOVE_PUSH_PER_STEP;
-    const active = push > 0 && forward !== "idle" && !blockedRef.current;
-    if (!active) {
+    const moving = forward !== "idle" && !blockedRef.current;
+    const push = (pace - 1) * MOVE_PUSH_PER_STEP;
+    const bob = settingsRef.current.headBob;
+
+    if (!moving) {
       if (movePoseActiveRef.current) {
         lw2.setCameraPose({ camera_pose: [] }).catch(() => undefined);
         movePoseActiveRef.current = false;
       }
       return;
     }
-    // [rx, ry, rz, tx, ty, tz]; tz is the forward axis, negative when backing up.
+
+    // [rx, ry, rz, tx, ty, tz]. LingBot's translation axis is y-DOWN, so a
+    // negative ty lifts the camera.
+    //
+    // Two jobs here. EYE_LIFT is a constant nudge upward that cancels the
+    // model's habit of sinking toward the floor while walking — the "height
+    // reduces when moving" problem. On top of that, a sine across the chunk's
+    // latents gives the gait an actual bob, which is most of what makes the
+    // walk read as a person rather than a dolly.
     const tz = forward === "forward" ? push : -push;
+    const bobAmount = bob ? BOB_BASE + pace * BOB_PER_PACE : 0;
     const pose: number[] = [];
-    for (let i = 0; i < CHUNK_LATENTS; i += 1) pose.push(0, 0, 0, 0, 0, tz);
+    for (let i = 0; i < CHUNK_LATENTS; i += 1) {
+      bobPhaseRef.current += BOB_STEP * (0.7 + pace * 0.18);
+      const ty = -EYE_LIFT + Math.sin(bobPhaseRef.current) * bobAmount;
+      // A touch of roll on the same phase, offset, so it sways as well as bobs.
+      const rz = bob ? Math.cos(bobPhaseRef.current) * bobAmount * 0.25 : 0;
+      pose.push(0, 0, rz, 0, ty, tz);
+    }
     lw2.setCameraPose({ camera_pose: pose }).catch(() => undefined);
     movePoseActiveRef.current = true;
   }, [lw2]);
@@ -492,8 +557,8 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     const stickMagnitude = Math.hypot(stick.x, stick.y);
     const basePace = settingsRef.current.moveSpeed;
     const nextPace = (
-      stickMagnitude > 0.85 ? Math.min(3, basePace + 1) : basePace
-    ) as 1 | 2 | 3;
+      stickMagnitude > 0.85 ? Math.min(4, basePace + 1) : basePace
+    ) as 1 | 2 | 3 | 4;
     if (nextPace !== effectivePaceRef.current) {
       effectivePaceRef.current = nextPace;
       changed = true;
@@ -504,6 +569,10 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
       movingRef.current = moving;
       changed = true;
       sendMovePoseRef.current();
+    }
+    // Footsteps follow the real movement state, so they stop dead on a wall.
+    if (settingsRef.current.soundEnabled) {
+      audioRef.current?.setWalking(moving && !blockedRef.current, nextPace);
     }
     setAttention(
       moving || searchChunksRef.current > 0 || takeChunksRef.current > 0
@@ -524,6 +593,7 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     lookVStackRef.current = [];
     movingRef.current = false;
     clearBlocked();
+    audioRef.current?.setWalking(false);
     if (statusRef.current !== "ready") return;
     lastMoveLongRef.current = "idle";
     lastMoveLatRef.current = "idle";
@@ -619,6 +689,15 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     if (!anchorBlobRef.current) return;
     launchPendingRef.current = true;
     setErrorMessage(null);
+    // This call is inside the WAKE UP click, which is the gesture the browser
+    // requires before an AudioContext may start.
+    if (settingsRef.current.soundEnabled) {
+      const audio = getAudio();
+      audio.start();
+      audio.resume();
+      audio.setVolume(settingsRef.current.volume);
+      audio.setAmbience(0);
+    }
     updateGame({
       ...initialState(settingsRef.current.loopSeconds),
       phase: "booting",
@@ -637,10 +716,15 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
             } catch (error) {
               connectError = error;
               if (!isCapacityError(error)) throw error;
+              const backoff = parseRetryAfterMs(error) ?? CAPACITY_RETRY_MS;
               setBootMessage(
-                `Every GPU is busy. Queueing for one… (${tries}/${CAPACITY_ATTEMPTS})`,
+                isRateLimit(error)
+                  ? `Too many sessions this minute. Waiting ${Math.ceil(
+                      backoff / 1000,
+                    )}s… (${tries}/${CAPACITY_ATTEMPTS})`
+                  : `Every GPU is busy. Queueing for one… (${tries}/${CAPACITY_ATTEMPTS})`,
               );
-              await delay(CAPACITY_RETRY_MS);
+              await delay(backoff);
             }
           }
           if (connectError) throw connectError;
@@ -698,6 +782,13 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     resetPendingRef.current = true;
     const nextLoop = gameRef.current.loopNumber + 1;
     stopMovement();
+    if (settingsRef.current.soundEnabled) {
+      audioRef.current?.setWalking(false);
+      audioRef.current?.playReset();
+      // Variation index is zero-based and clamps at the last preset, so the
+      // room tone gets darker exactly in step with the visuals.
+      audioRef.current?.setAmbience(nextLoop - 1);
+    }
     lookRef.current.release();
     updateGame({
       phase: "waking",
@@ -754,6 +845,10 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     if (gameRef.current.phase !== "loop") return;
     escapingRef.current = true;
     stopMovement();
+    if (settingsRef.current.soundEnabled) {
+      audioRef.current?.setWalking(false);
+      audioRef.current?.playEscape();
+    }
     lookRef.current.release();
     updateGame({ phase: "escape" });
     queuePrompt(true);
@@ -773,6 +868,7 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     }
     if (state.keyVisible) {
       takeChunksRef.current = EVENT_CHUNKS;
+      if (settingsRef.current.soundEnabled) audioRef.current?.playKey();
       updateGame({ keyVisible: false, hasKey: true, hadKeyEver: true });
       queuePrompt(true);
       return;
@@ -780,6 +876,7 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     const searches = state.searchesThisLoop + 1;
     updateGame({ searchesThisLoop: searches });
     searchChunksRef.current = EVENT_CHUNKS;
+    if (settingsRef.current.soundEnabled) audioRef.current?.playSearch();
     pendingRevealRef.current = searchRevealsKey(
       { ...state, searchesThisLoop: searches },
       settingsRef.current,
@@ -973,6 +1070,19 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     }, 260);
     return () => window.clearInterval(timer);
   }, [settings.collisionFeedback]);
+
+  // Keep the mixer in step with the settings panel.
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.setMuted(!settings.soundEnabled);
+    audio.setVolume(settings.volume);
+  }, [settings.soundEnabled, settings.volume]);
+
+  // Silence the footsteps whenever play stops.
+  useEffect(() => {
+    if (game.phase !== "loop") audioRef.current?.setWalking(false);
+  }, [game.phase]);
 
   // Push turn speed to the model when the setting changes mid-session.
   useEffect(() => {
@@ -1343,7 +1453,12 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
       {phase === "error" && (
         <div className="overlay overlay-error">
           <h2 className="error-title">The building holds its breath.</h2>
-          {errorMessage && isCapacityError(errorMessage) ? (
+          {errorMessage && isRateLimit(errorMessage) ? (
+            <p className="error-detail">
+              Reactor allows 10 new sessions a minute for this model and we have
+              used them up. Wait a minute, then try again — nothing is broken.
+            </p>
+          ) : errorMessage && isCapacityError(errorMessage) ? (
             <p className="error-detail">
               Reactor has no free GPUs right now — every world model server is
               busy. This is capacity, not a bug. Try again in a moment.

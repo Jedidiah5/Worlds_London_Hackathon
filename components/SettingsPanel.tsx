@@ -81,22 +81,26 @@ export function SettingsPanel({
           <Row
             label="Move speed"
             hint={
-              settings.moveSpeed === 1
-                ? "walk"
-                : settings.moveSpeed === 2
-                  ? "brisk"
-                  : "fast"
+              ["walk", "brisk", "fast", "run"][settings.moveSpeed - 1] ?? "fast"
             }
           >
             <input
               type="range"
               min={1}
-              max={3}
+              max={4}
               step={1}
               value={settings.moveSpeed}
               onChange={(e) =>
-                onChange({ moveSpeed: Number(e.target.value) as 1 | 2 | 3 })
+                onChange({ moveSpeed: Number(e.target.value) as 1 | 2 | 3 | 4 })
               }
+            />
+          </Row>
+
+          <Row label="Head bob" hint="walking gait">
+            <input
+              type="checkbox"
+              checked={settings.headBob}
+              onChange={(e) => onChange({ headBob: e.target.checked })}
             />
           </Row>
 
@@ -107,6 +111,29 @@ export function SettingsPanel({
               onChange={(e) => onChange({ showHands: e.target.checked })}
             />
           </Row>
+
+          <div className="settings-divider" />
+
+          <Row label="Sound" hint="footsteps + room tone">
+            <input
+              type="checkbox"
+              checked={settings.soundEnabled}
+              onChange={(e) => onChange({ soundEnabled: e.target.checked })}
+            />
+          </Row>
+
+          {settings.soundEnabled && (
+            <Row label="Volume" hint={`${Math.round(settings.volume * 100)}%`}>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={settings.volume}
+                onChange={(e) => onChange({ volume: Number(e.target.value) })}
+              />
+            </Row>
+          )}
 
           <Row
             label="Mouse sensitivity"

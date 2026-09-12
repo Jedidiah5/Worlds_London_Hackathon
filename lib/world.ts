@@ -17,7 +17,7 @@ export type WorldContract = {
 
 // Framing shared by both embodiment modes.
 const CAMERA_BASE =
-  "First-person view at standing human eye height, roughly 1.6 metres above the floor, looking straight ahead and level down the corridor. The horizon stays near the middle of the frame with the ceiling visible across the top of the shot and the floor filling no more than the bottom third. Never tilt the camera down toward the floor, never look at the ground, never angle up into the ceiling, and never roll the horizon. Never float, never rise to ceiling height, never sink toward the floor.";
+  "First-person view at standing human eye height, roughly 1.6 metres above the floor, looking straight ahead and level down the corridor. The horizon stays near the middle of the frame with the ceiling visible across the top of the shot and the floor filling no more than the bottom third. The camera height above the floor is absolutely constant and never changes: it does not sink, lower, descend, crouch, drop toward the ground, or drift downward while walking, and it never rises toward the ceiling. Walking changes position, never height. Never tilt the camera down toward the floor, never look at the ground, never angle up into the ceiling, and never roll the horizon.";
 
 // Hands are the thing most likely to come out wrong — a world model will grow
 // extra fingers or a second pair given the chance. Be relentlessly specific
@@ -32,7 +32,7 @@ export const WORLD: WorldContract = {
   environment:
     "The same modern open-plan office floor throughout: deep forest-green painted walls and columns, a black exposed ceiling of ducts and pipes on the left, trailing green ferns hanging from the ceiling line, tall black slatted timber screens enclosing soft seating booths with grey sofas and dark green cushions, a tan leather armchair and a woven rattan chair in the near foreground, warm oak flooring in the lounge, pale grey tiled flooring in the corridor, a long dark wood reception counter along the right wall, recessed ceiling downlights and linear LED strips, and a bright white-lit doorway at the far end of the corridor straight ahead.",
   invariants:
-    "Never go outside and never show the outdoors except as white light through the far doorway. Never show any other person, figure, face, crowd, animal, or creature anywhere — the viewer's own hands are the only human part ever in frame, and no one else exists in this building. Never change the floor plan: the corridor, the seating booths, the reception counter, the columns, and the far doorway stay exactly where they are relative to each other. Solid surfaces block movement — the viewer never passes through walls, columns, glass, slatted screens, the reception counter, or furniture; when the viewer moves toward a solid surface the view stops advancing and that surface stays solid and intact in front of them, never dissolving or opening. Maintain strict spatial continuity: walls, doors, and furniture never move or vanish between moments.",
+    "Never go outside and never show the outdoors except as white light through the far doorway. Never show any other person, figure, face, crowd, animal, or creature anywhere — the viewer's own hands are the only human part ever in frame, and no one else exists in this building. Never change the floor plan: the corridor, the seating booths, the reception counter, the columns, and the far doorway stay exactly where they are relative to each other. Solid surfaces block movement — the viewer never passes through walls, columns, glass, slatted screens, the reception counter, or furniture; when the viewer moves toward a solid surface the view stops advancing and that surface stays solid and intact in front of them, never dissolving or opening. There is ALWAYS a complete, solid, continuous floor beneath the viewer, running unbroken from the bottom edge of the frame to the base of every wall — grey tile in the corridor, warm oak in the lounge. The floor never disappears, never opens into a hole, pit, void, water, sky, or darkness, and never becomes transparent or missing; the bottom of the frame is always ground. Maintain strict spatial continuity: walls, doors, floor, and furniture never move or vanish between moments.",
 };
 
 export type LoopVariation = {
@@ -95,16 +95,22 @@ export const BLOCKED_PROMPT =
 // How fast the world reads as moving. The model has no speed parameter, so
 // pace is carried by the prompt (and reinforced by camera-pose translation in
 // the app). 1 is the old sluggish default; 3 is close to a jog.
-export const PACE_PROMPTS: Record<1 | 2 | 3, string> = {
-  1: "The viewer walks smoothly through the office floor at a calm, steady human pace, moving along the corridor and between the columns naturally.",
-  2: "The viewer strides briskly and purposefully through the office floor, covering ground quickly along the corridor, the walls and columns sweeping past at a good speed with the arms swinging in rhythm.",
-  3: "The viewer moves fast, almost at a jog, rushing along the corridor and covering ground rapidly. The walls, columns and booths sweep past quickly, the camera bobs with the urgent pace, and the arms pump with the effort.",
+export type Pace = 1 | 2 | 3 | 4;
+
+// Each level describes the gait, because "walking" is the only speed control
+// the model has. The human-movement cues — weight shifting, footfalls, a slight
+// side-to-side roll — are what stop it feeling like a camera on rails.
+export const PACE_PROMPTS: Record<Pace, string> = {
+  1: "The viewer walks through the office floor at a calm, steady human pace, weight shifting naturally from foot to foot with a gentle, barely perceptible side-to-side sway at constant eye height.",
+  2: "The viewer walks briskly and purposefully through the office floor, covering ground at a good speed. The gait is unmistakably human: a steady rhythm of footfalls, a slight natural bob and side-to-side roll with each step, arms swinging in time, eye height constant throughout.",
+  3: "The viewer moves quickly through the office floor, covering ground fast with long purposeful strides. The walls, columns and booths sweep past at speed. The gait stays human — a firm rhythm of footfalls, a pronounced but natural bob and roll with each stride, arms pumping — and the eye height stays constant.",
+  4: "The viewer is running, moving urgently and very fast down the corridor. The walls, columns and booths rush past. The motion is a human run: rapid footfalls, a strong rhythmic bob and roll with each stride, arms pumping hard, and the eye height stays constant at standing head height and never drops.",
 };
 
 const MOVING_TAIL =
-  "The walls, booths, counter, and doorway stay solid and consistent throughout.";
+  "The walls, booths, counter, floor, and doorway stay solid and consistent throughout, and the camera stays at the same constant height above an unbroken floor.";
 
-export function movingPrompt(pace: 1 | 2 | 3): string {
+export function movingPrompt(pace: Pace): string {
   return `${PACE_PROMPTS[pace]} ${MOVING_TAIL}`;
 }
 
@@ -131,7 +137,7 @@ export function composeWorldPrompt(options: {
   takeActive: boolean;
   escaping: boolean;
   showHands: boolean;
-  pace: 1 | 2 | 3;
+  pace: Pace;
 }): string {
   const variation = variationForLoop(options.loopNumber);
 

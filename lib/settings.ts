@@ -14,8 +14,11 @@ export type Settings = {
   tiltEnabled: boolean; // phone tilt steers left/right
   tiltSensitivity: number; // 0.2 – 3.0
   touchControls: "auto" | "on" | "off";
-  moveSpeed: 1 | 2 | 3; // walking pace: prompt wording + camera-pose push
+  moveSpeed: 1 | 2 | 3 | 4; // walking pace: prompt wording + camera-pose push
   showHands: boolean; // render the player's own hands in first person
+  headBob: boolean; // gait bob applied through camera pose
+  soundEnabled: boolean;
+  volume: number; // 0 – 1
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -31,8 +34,11 @@ export const DEFAULT_SETTINGS: Settings = {
   tiltEnabled: false,
   tiltSensitivity: 1,
   touchControls: "auto",
-  moveSpeed: 2,
+  moveSpeed: 3,
   showHands: true,
+  headBob: true,
+  soundEnabled: true,
+  volume: 0.7,
 };
 
 const STORAGE_KEY = "loop-house-settings";
