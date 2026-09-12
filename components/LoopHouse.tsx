@@ -8,7 +8,8 @@ import {
 } from "@reactor-models/lingbot-world-2";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SettingsPanel } from "@/components/SettingsPanel";
-import { useMouseLook } from "@/hooks/useMouseLook";
+import { useLookInput } from "@/hooks/useLookInput";
+import { TouchControls, type MoveVector } from "@/components/TouchControls";
 import {
   createFrameSampler,
   STALL_SAMPLES,
@@ -38,23 +39,54 @@ import {
 
 const API_URL =
   process.env.NEXT_PUBLIC_COORDINATOR_URL ?? "https://api.reactor.inc";
-const CHUNK_LATENTS = 3;
-
 type MoveLong = "idle" | "forward" | "back";
 type MoveLat = "idle" | "strafe_left" | "strafe_right";
 type LookH = "idle" | "left" | "right";
 type LookV = "idle" | "up" | "down";
 
+// One token per session, and a new one for each new session.
+//
+// The SDK asks for a JWT more than once (connect, upload slots, session polls).
+// A session-scoped token is bound to the session it opened, so handing out a
+// different token mid-session 403s those calls — and reusing an old token
+// against a freshly created session 403s too. Caching here with an explicit
+// invalidation on connect satisfies both.
+let cachedToken: { jwt: string; expiresAtMs: number } | null = null;
+let inflightToken: Promise<string> | null = null;
+const TOKEN_SKEW_MS = 60_000;
+
+function invalidateToken() {
+  cachedToken = null;
+}
+
 async function fetchToken(): Promise<string> {
-  const response = await fetch("/api/reactor/token");
-  const body = (await response.json().catch(() => ({}))) as {
-    jwt?: string;
-    error?: string;
-  };
-  if (!response.ok || !body.jwt) {
-    throw new Error(body.error ?? `Token request failed (${response.status})`);
+  if (cachedToken && Date.now() < cachedToken.expiresAtMs - TOKEN_SKEW_MS) {
+    return cachedToken.jwt;
   }
-  return body.jwt;
+  if (inflightToken) return inflightToken;
+  inflightToken = (async () => {
+    try {
+      const response = await fetch("/api/reactor/token", { cache: "no-store" });
+      const body = (await response.json().catch(() => ({}))) as {
+        jwt?: string;
+        expires_at?: number;
+        error?: string;
+      };
+      if (!response.ok || !body.jwt) {
+        throw new Error(
+          body.error ?? `Token request failed (${response.status})`,
+        );
+      }
+      cachedToken = {
+        jwt: body.jwt,
+        expiresAtMs: (body.expires_at ?? Math.floor(Date.now() / 1000) + 3600) * 1000,
+      };
+      return body.jwt;
+    } finally {
+      inflightToken = null;
+    }
+  })();
+  return inflightToken;
 }
 
 function waitFor(
@@ -156,6 +188,12 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
   const [promptNote, setPromptNote] = useState("");
   const [blocked, setBlocked] = useState(false);
   const [motionDelta, setMotionDelta] = useState(0);
+  const [lookDebug, setLookDebug] = useState({
+    h: "idle",
+    v: "idle",
+    speed: "0",
+    dx: "0",
+  });
 
   const stageRef = useRef<HTMLElement>(null);
   const gameRef = useRef<GameState>(game);
@@ -193,17 +231,33 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
   const promptQueuedRef = useRef<string | null>(null);
   const promptInFlightRef = useRef(false);
   const attnRef = useRef<"small" | "large">("small");
-  const poseActiveRef = useRef(false);
+  const lastRotationSpeedRef = useRef(-1);
 
   const samplerRef = useRef<ReturnType<typeof createFrameSampler> | null>(null);
   const stallCountRef = useRef(0);
 
   const playing = game.phase === "loop";
-  const mouseLook = useMouseLook({
+  const look = useLookInput({
     enabled: playing,
-    sensitivity: settings.mouseSensitivity,
     invertY: settings.invertY,
+    tiltEnabled: settings.tiltEnabled,
+    tiltSensitivity: settings.tiltSensitivity,
   });
+
+  // Movement coming from the on-screen thumbstick, independent of the keyboard.
+  const touchMoveRef = useRef<MoveVector>({ x: 0, y: 0 });
+  const [coarsePointer, setCoarsePointer] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const query = window.matchMedia("(pointer: coarse)");
+    const update = () => setCoarsePointer(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  // Stable handle so callbacks can reach the look input without re-binding.
+  const lookRef = useRef(look);
+  lookRef.current = look;
 
   useEffect(() => {
     const stored = loadSettings();
@@ -302,26 +356,42 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     [lw2],
   );
 
-  // Mouse look is delivered as per-latent camera deltas, re-sent each chunk.
-  const sendCameraPose = useCallback(() => {
-    if (statusRef.current !== "ready" || gameRef.current.phase !== "loop") return;
-    const { yaw, pitch } = mouseLook.consume();
-    const active = Math.abs(yaw) > 0.0005 || Math.abs(pitch) > 0.0005;
-    if (!active) {
-      if (poseActiveRef.current) {
-        lw2.setCameraPose({ camera_pose: [] }).catch(() => undefined);
-        poseActiveRef.current = false;
+  // Look is a continuous turn state, not a per-chunk pose.
+  //
+  // The first version posted one set_camera_pose per chunk, which meant moving
+  // the mouse did nothing for a second and then lurched. set_look_horizontal is
+  // a persistent direction the model turns at steadily, so driving that on a
+  // fast tick — and scaling set_rotation_speed_deg by how hard you moved —
+  // feels like a camera instead of a slideshow.
+  const applyLook = useCallback(
+    (lookH: LookH, lookV: LookV, speedDeg: number) => {
+      if (statusRef.current !== "ready") return;
+      if (lookH !== lastLookHRef.current) {
+        lastLookHRef.current = lookH;
+        lw2.setLookHorizontal({ look_horizontal: lookH }).catch(() => undefined);
       }
-      return;
-    }
-    const pose: number[] = [];
-    for (let i = 0; i < CHUNK_LATENTS; i += 1) {
-      // [rx, ry, rz, tx, ty, tz] — pitch, yaw, roll, then translation.
-      pose.push(pitch, yaw, 0, 0, 0, 0);
-    }
-    lw2.setCameraPose({ camera_pose: pose }).catch(() => undefined);
-    poseActiveRef.current = true;
-  }, [lw2, mouseLook]);
+      if (lookV !== lastLookVRef.current) {
+        lastLookVRef.current = lookV;
+        lw2.setLookVertical({ look_vertical: lookV }).catch(() => undefined);
+      }
+      const rounded = Math.round(speedDeg * 2) / 2;
+      if (rounded !== lastRotationSpeedRef.current) {
+        lastRotationSpeedRef.current = rounded;
+        lw2
+          .setRotationSpeedDeg({ rotation_speed_deg: rounded })
+          .catch(() => undefined);
+      }
+      if (settingsRef.current.showDebug) {
+        setLookDebug((prev) => ({
+          ...prev,
+          h: lookH,
+          v: lookV,
+          speed: String(rounded),
+        }));
+      }
+    },
+    [lw2],
+  );
 
   const clearBlocked = useCallback(() => {
     if (!blockedRef.current) return;
@@ -332,10 +402,27 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
 
   const sendMovementCommands = useCallback(() => {
     if (statusRef.current !== "ready") return;
-    const moveLong: MoveLong = moveLongStackRef.current.at(-1) ?? "idle";
-    const moveLat: MoveLat = moveLatStackRef.current.at(-1) ?? "idle";
-    const lookH: LookH = lookHStackRef.current.at(-1) ?? "idle";
-    const lookV: LookV = lookVStackRef.current.at(-1) ?? "idle";
+    // The thumbstick wins while it is being held; otherwise the keyboard.
+    const stick = touchMoveRef.current;
+    const STICK_DEADZONE = 0.34;
+    const stickLong: MoveLong =
+      stick.y > STICK_DEADZONE
+        ? "forward"
+        : stick.y < -STICK_DEADZONE
+          ? "back"
+          : "idle";
+    const stickLat: MoveLat =
+      stick.x > STICK_DEADZONE
+        ? "strafe_right"
+        : stick.x < -STICK_DEADZONE
+          ? "strafe_left"
+          : "idle";
+    const moveLong: MoveLong =
+      stickLong !== "idle"
+        ? stickLong
+        : (moveLongStackRef.current.at(-1) ?? "idle");
+    const moveLat: MoveLat =
+      stickLat !== "idle" ? stickLat : (moveLatStackRef.current.at(-1) ?? "idle");
     let changed = false;
     if (moveLong !== lastMoveLongRef.current) {
       lastMoveLongRef.current = moveLong;
@@ -348,14 +435,6 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
       lastMoveLatRef.current = moveLat;
       changed = true;
       lw2.setMoveLateral({ move_lateral: moveLat }).catch(() => undefined);
-    }
-    if (lookH !== lastLookHRef.current) {
-      lastLookHRef.current = lookH;
-      lw2.setLookHorizontal({ look_horizontal: lookH }).catch(() => undefined);
-    }
-    if (lookV !== lastLookVRef.current) {
-      lastLookVRef.current = lookV;
-      lw2.setLookVertical({ look_vertical: lookV }).catch(() => undefined);
     }
     const moving = moveLong !== "idle" || moveLat !== "idle";
     if (moving !== movingRef.current) {
@@ -390,10 +469,8 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     lw2.setMoveLateral({ move_lateral: "idle" }).catch(() => undefined);
     lw2.setLookHorizontal({ look_horizontal: "idle" }).catch(() => undefined);
     lw2.setLookVertical({ look_vertical: "idle" }).catch(() => undefined);
-    if (poseActiveRef.current) {
-      lw2.setCameraPose({ camera_pose: [] }).catch(() => undefined);
-      poseActiveRef.current = false;
-    }
+    touchMoveRef.current = { x: 0, y: 0 };
+    lookRef.current.reset();
   }, [clearBlocked, lw2]);
 
   // Upload the anchor, condition the model for the given loop, and start.
@@ -480,6 +557,9 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
       for (let attempt = 1; attempt <= TRANSPORT_ATTEMPTS; attempt += 1) {
         try {
           setBootMessage("Connecting…");
+          // Each new session needs its own token; the old one is bound to a
+          // session that no longer exists.
+          invalidateToken();
           let connectError: unknown = null;
           for (let tries = 1; tries <= CAPACITY_ATTEMPTS; tries += 1) {
             if (statusRef.current !== "disconnected") break;
@@ -542,7 +622,7 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     resetPendingRef.current = true;
     const nextLoop = gameRef.current.loopNumber + 1;
     stopMovement();
-    mouseLook.release();
+    lookRef.current.release();
     updateGame({
       phase: "waking",
       loopNumber: nextLoop,
@@ -565,13 +645,13 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     } finally {
       resetPendingRef.current = false;
     }
-  }, [failToError, lw2, mouseLook, stageAndStart, stopMovement, updateGame]);
+  }, [failToError, lw2, stageAndStart, stopMovement, updateGame]);
 
   const beginEscape = useCallback(() => {
     if (gameRef.current.phase !== "loop") return;
     escapingRef.current = true;
     stopMovement();
-    mouseLook.release();
+    lookRef.current.release();
     updateGame({ phase: "escape" });
     queuePrompt(true);
     dispatchPrompt(true);
@@ -579,7 +659,7 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
       updateGame({ phase: "ended" });
       if (statusRef.current === "ready") lw2.reset().catch(() => undefined);
     }, ESCAPE_SECONDS * 1000);
-  }, [dispatchPrompt, lw2, mouseLook, queuePrompt, stopMovement, updateGame]);
+  }, [dispatchPrompt, lw2, queuePrompt, stopMovement, updateGame]);
 
   const interact = useCallback(() => {
     const state = gameRef.current;
@@ -648,7 +728,6 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
           takeChunksRef.current -= 1;
           if (takeChunksRef.current === 0) queuePrompt();
         }
-        sendCameraPose();
         dispatchPrompt();
         break;
       case "command_error":
@@ -656,6 +735,72 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
         break;
     }
   });
+
+  const sendMovementCommandsRef = useRef(sendMovementCommands);
+  sendMovementCommandsRef.current = sendMovementCommands;
+
+  // Look tick. Runs at 100ms so turning tracks the hand, not the chunk rate.
+  const lookTickRef = useRef({ look, applyLook, settings });
+  lookTickRef.current = { look, applyLook, settings };
+
+  useEffect(() => {
+    const LOOK_TICK_MS = 100;
+    const PIXEL_DEADZONE = 2.2; // px per tick before we call it a turn
+    const PIXEL_FULL = 42; // px per tick that counts as a hard flick
+    const TILT_DEADZONE = 0.08;
+
+    const timer = window.setInterval(() => {
+      const { look, applyLook, settings } = lookTickRef.current;
+      if (gameRef.current.phase !== "loop") return;
+
+      const { dx, dy, tiltX } = look.drain();
+      const sens = settings.mouseSensitivity;
+      const px = dx * sens;
+      const py = dy * sens;
+      if (settings.showDebug && (dx !== 0 || dy !== 0)) {
+        setLookDebug((prev) => ({
+          ...prev,
+          dx: `${dx.toFixed(0)}/${dy.toFixed(0)}`,
+        }));
+      }
+
+      // Arrow keys are explicit and win outright.
+      const keyH = lookHStackRef.current.at(-1);
+      const keyV = lookVStackRef.current.at(-1);
+
+      let lookH: LookH = "idle";
+      let lookV: LookV = "idle";
+      let intensity = 0;
+
+      if (keyH) {
+        lookH = keyH;
+        intensity = 0.6;
+      } else if (Math.abs(px) > PIXEL_DEADZONE) {
+        lookH = px > 0 ? "right" : "left";
+        intensity = Math.max(intensity, Math.min(1, Math.abs(px) / PIXEL_FULL));
+      } else if (Math.abs(tiltX) > TILT_DEADZONE) {
+        lookH = tiltX > 0 ? "right" : "left";
+        intensity = Math.max(intensity, Math.min(1, Math.abs(tiltX)));
+      }
+
+      if (keyV) {
+        lookV = keyV;
+        intensity = Math.max(intensity, 0.6);
+      } else if (Math.abs(py) > PIXEL_DEADZONE) {
+        lookV = py > 0 ? "down" : "up";
+        intensity = Math.max(intensity, Math.min(1, Math.abs(py) / PIXEL_FULL));
+      }
+
+      // Scale turn speed with how hard the player moved, around their setting.
+      const base = settings.lookSpeedDeg;
+      const speed =
+        lookH === "idle" && lookV === "idle"
+          ? base
+          : Math.min(30, Math.max(1, base * (0.45 + intensity * 1.6)));
+      applyLook(lookH, lookV, speed);
+    }, LOOK_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // The loop clock. Truth lives here, not in the model.
   //
@@ -858,9 +1003,20 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
   );
   const critical = phase === "loop" && game.secondsLeft <= 10;
   const elapsedThisLoop = settings.loopSeconds - game.secondsLeft;
+  // Touch controls: on by default wherever the primary input is coarse.
+  // Resolved before the hint copy, which names a different verb on touch.
+  const touchMode =
+    settings.touchControls === "on" ||
+    (settings.touchControls === "auto" && coarsePointer);
+
+  const onTouchMove = useCallback((vector: MoveVector) => {
+    touchMoveRef.current = vector;
+    sendMovementCommandsRef.current();
+  }, []);
+
   const hint = useMemo(
-    () => currentHint(game, settings, elapsedThisLoop),
-    [game, settings, elapsedThisLoop],
+    () => currentHint(game, settings, elapsedThisLoop, touchMode),
+    [game, settings, elapsedThisLoop, touchMode],
   );
   const wake = wakeHint(game, settings);
 
@@ -887,7 +1043,24 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
         ) {
           return;
         }
-        if (stageRef.current) mouseLook.requestLock(stageRef.current);
+        // On touch the drag pad handles looking; pointer lock is desktop-only.
+        if (touchMode || event.pointerType === "touch") return;
+        if (stageRef.current) look.requestLock(stageRef.current);
+        // Also arm drag-to-look, so a refused or unavailable pointer lock still
+        // leaves the player a way to turn.
+        look.onDragStart(event);
+      }}
+      onPointerMove={(event) => {
+        if (!playing || touchMode || look.locked) return;
+        look.onDragMove(event);
+      }}
+      onPointerUp={(event) => {
+        if (touchMode) return;
+        look.onDragEnd(event);
+      }}
+      onPointerCancel={(event) => {
+        if (touchMode) return;
+        look.onDragEnd(event);
       }}
     >
       {showVideo && (
@@ -904,8 +1077,18 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
         <SettingsPanel
           open={settingsOpen}
           settings={settings}
+          tiltSupported={look.tiltPermission !== "unsupported"}
           onToggle={() => setSettingsOpen((value) => !value)}
           onChange={updateSettings}
+          onTiltChange={async (enabled) => {
+            if (!enabled) {
+              updateSettings({ tiltEnabled: false });
+              return;
+            }
+            const granted =
+              look.tiltPermission === "granted" || (await look.requestTilt());
+            if (granted) updateSettings({ tiltEnabled: true });
+          }}
           onReset={resetSettings}
         />
       )}
@@ -933,7 +1116,9 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
           </div>
           <div className="hud-corner hud-bottom-right">
             <span className="controls-hint">
-              WASD MOVE · MOUSE LOOK · E INTERACT
+              {touchMode
+                ? "STICK MOVES · DRAG LOOKS"
+                : "WASD MOVE · MOUSE LOOK · E INTERACT"}
             </span>
           </div>
 
@@ -945,10 +1130,37 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
             </div>
           )}
 
-          {!mouseLook.locked && (
+          {!look.locked && !touchMode && (
             <div className="lock-prompt">CLICK TO LOOK AROUND · ESC TO RELEASE</div>
           )}
         </div>
+      )}
+
+      {phase === "loop" && touchMode && (
+        <TouchControls
+          onMove={onTouchMove}
+          onInteract={interact}
+          interactLabel={
+            game.hasKey ? "OPEN" : game.keyVisible ? "TAKE" : "SEARCH"
+          }
+          lookHandlers={{
+            onPointerDown: look.onDragStart,
+            onPointerMove: look.onDragMove,
+            onPointerUp: look.onDragEnd,
+          }}
+          showTiltButton={look.tiltPermission !== "unsupported"}
+          tiltOn={settings.tiltEnabled}
+          onToggleTilt={async () => {
+            if (!settings.tiltEnabled) {
+              const granted =
+                look.tiltPermission === "granted" || (await look.requestTilt());
+              if (!granted) return;
+              updateSettings({ tiltEnabled: true });
+            } else {
+              updateSettings({ tiltEnabled: false });
+            }
+          }}
+        />
       )}
 
       {phase === "title" && (
@@ -1050,8 +1262,13 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
           <p>
             phase: {phase} · loop: {game.loopNumber} · t-{game.secondsLeft}s ·
             searches: {game.searchesThisLoop} · keyVisible:{" "}
-            {String(game.keyVisible)} · hasKey: {String(game.hasKey)} · lock:{" "}
-            {String(mouseLook.locked)}
+            {String(game.keyVisible)} · hasKey: {String(game.hasKey)}
+          </p>
+          <p>
+            lock: {String(look.locked)} · drag: {String(look.dragging)} · touch:{" "}
+            {String(touchMode)} · look: {lookDebug.h}/{lookDebug.v} @{" "}
+            {lookDebug.speed}° · d: {lookDebug.dx} · tilt: {look.tiltPermission}
+            {look.tiltActive ? " (live)" : ""}
           </p>
           <p className="debug-prompt">{lastPromptRef.current.slice(0, 200)}…</p>
           <div className="debug-actions">

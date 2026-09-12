@@ -53,12 +53,27 @@ in frame — the model will happily keep them.
 | Input | Does |
 | --- | --- |
 | `W` `A` `S` `D` | Walk and strafe |
-| **Mouse** | Look — click the scene to capture the pointer, `Esc` releases it |
+| **Mouse** | Look — click the scene to capture the pointer, `Esc` releases it. If pointer lock is refused, click-and-drag still turns you |
 | Arrow keys | Look, if you'd rather not capture the mouse |
 | `E` | Search here / take the key / open the exit |
-| Gear icon (top centre) | Settings — loop length, sensitivity, hints, difficulty |
+| Gear icon (top centre) | Settings — loop length, sensitivity, hints, difficulty, touch, tilt |
 | `` ` `` | Debug panel (state readout + force reset, grant key, escape now) |
 | `R` | Restart, on the end and error screens |
+
+### On a phone
+
+On-screen controls appear automatically on any coarse-pointer device (override
+with **On-screen controls** in settings):
+
+| Input | Does |
+| --- | --- |
+| Left thumbstick | Walk and strafe |
+| Drag anywhere | Look |
+| Big brass button | SEARCH / TAKE / OPEN, matching what you can do right now |
+| **TILT** button | Tilt the phone left or right to steer |
+
+Tilt uses `deviceorientation` gamma with a 6° deadzone. iOS requires a
+permission prompt, which is why it is behind a button rather than on by default.
 
 ## Reactor capacity — read this before demoing
 
@@ -101,7 +116,8 @@ Files worth knowing:
 - `lib/settings.ts` — the live-tunable knobs behind the gear icon.
 - `lib/hints.ts` — the hint ladder and the objective line.
 - `lib/frames.ts` — the collision approximation (see below).
-- `hooks/useMouseLook.ts` — pointer lock and mouse-to-camera-delta conversion.
+- `hooks/useLookInput.ts` — mouse, drag, touch and tilt look input.
+- `components/TouchControls.tsx` — the on-screen thumbstick and action button.
 - `components/LoopHouse.tsx` — session lifecycle, input, prompt scheduling, HUD.
 - `app/api/reactor/token/route.ts` — mints a short-lived scoped JWT. The API key
   stays on the server; the browser never sees it.
@@ -118,13 +134,36 @@ strongest version of the hook.
 different photo, rewrite `WORLD` in `lib/world.ts` to describe the new image, or
 the model gets contradictory conditioning and the output falls apart.
 
-### Mouse look
+### Looking around
 
-Pointer lock captures the mouse; movement accumulates and is drained once per
-model chunk into `set_camera_pose` as per-latent `[rx, ry, rz, tx, ty, tz]`
-deltas. Sensitivity and invert-Y are in settings, as is turn speed
-(`set_rotation_speed_deg`). If the pitch axis feels backwards on the day, flip
-**Invert look Y** in settings rather than editing code.
+Look is a **continuous turn state**, not a per-chunk camera pose. An earlier
+version posted one `set_camera_pose` per model chunk, which meant moving the
+mouse did nothing for a second and then lurched — it felt broken. Instead,
+`hooks/useLookInput.ts` accumulates pointer deltas (pointer-locked mouse, mouse
+drag, touch drag) plus absolute device tilt, and a 100ms tick in
+`components/LoopHouse.tsx` resolves them into `set_look_horizontal` /
+`set_look_vertical`, scaling `set_rotation_speed_deg` by how hard you moved.
+The model turns steadily in that direction until you stop, which is what the
+chunked generation is actually good at.
+
+Arrow keys override the pointer; the pointer overrides tilt. Sensitivity,
+invert-Y and base turn speed are all in settings — if pitch feels backwards on
+the day, flip **Invert look Y** rather than editing code.
+
+### Session tokens — a trap worth knowing about
+
+A Reactor session-scoped JWT is **bound to the session it opened**. That cuts
+both ways, and both halves bite:
+
+- Hand out a *different* token mid-session and the SDK's upload-slot and
+  session-poll calls fail with `403 this token is session-scoped and is not
+  authorized for this resource`.
+- Reuse an *old* token against a newly created session and you get the same 403.
+
+So the token is cached in module scope in `components/LoopHouse.tsx` and
+explicitly invalidated with `invalidateToken()` immediately before each
+`connect()`. The route sends `Cache-Control: private, no-store` so the browser
+never second-guesses that. One token per session, a new token per session.
 
 ### Walls
 

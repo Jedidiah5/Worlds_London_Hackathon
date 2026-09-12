@@ -11,6 +11,9 @@ export type Settings = {
   keySearchIndex: number; // searches needed in an eligible loop
   collisionFeedback: boolean; // detect walking into a wall
   showDebug: boolean;
+  tiltEnabled: boolean; // phone tilt steers left/right
+  tiltSensitivity: number; // 0.2 – 3.0
+  touchControls: "auto" | "on" | "off";
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -23,6 +26,9 @@ export const DEFAULT_SETTINGS: Settings = {
   keySearchIndex: 2,
   collisionFeedback: true,
   showDebug: false,
+  tiltEnabled: false,
+  tiltSensitivity: 1,
+  touchControls: "auto",
 };
 
 const STORAGE_KEY = "loop-house-settings";

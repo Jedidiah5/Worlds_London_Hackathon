@@ -36,14 +36,19 @@ function Row({
 export function SettingsPanel({
   open,
   settings,
+  tiltSupported,
   onToggle,
   onChange,
+  onTiltChange,
   onReset,
 }: {
   open: boolean;
   settings: Settings;
+  tiltSupported: boolean;
   onToggle: () => void;
   onChange: (patch: Partial<Settings>) => void;
+  /** Separate because enabling tilt may need an OS permission prompt. */
+  onTiltChange: (enabled: boolean) => void;
   onReset: () => void;
 }) {
   return (
@@ -107,6 +112,50 @@ export function SettingsPanel({
               onChange={(e) => onChange({ lookSpeedDeg: Number(e.target.value) })}
             />
           </Row>
+
+          <Row label="On-screen controls" hint={settings.touchControls}>
+            <select
+              value={settings.touchControls}
+              onChange={(e) =>
+                onChange({
+                  touchControls: e.target.value as Settings["touchControls"],
+                })
+              }
+            >
+              <option value="auto">auto</option>
+              <option value="on">always</option>
+              <option value="off">never</option>
+            </select>
+          </Row>
+
+          {tiltSupported && (
+            <>
+              <Row label="Tilt to steer" hint="phone only">
+                <input
+                  type="checkbox"
+                  checked={settings.tiltEnabled}
+                  onChange={(e) => onTiltChange(e.target.checked)}
+                />
+              </Row>
+              {settings.tiltEnabled && (
+                <Row
+                  label="Tilt sensitivity"
+                  hint={settings.tiltSensitivity.toFixed(1)}
+                >
+                  <input
+                    type="range"
+                    min={0.2}
+                    max={3}
+                    step={0.1}
+                    value={settings.tiltSensitivity}
+                    onChange={(e) =>
+                      onChange({ tiltSensitivity: Number(e.target.value) })
+                    }
+                  />
+                </Row>
+              )}
+            </>
+          )}
 
           <div className="settings-divider" />
 

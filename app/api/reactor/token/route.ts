@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 const MODEL_NAME = "reactor/lingbot-world-2";
 const MAX_SESSIONS = 10;
 const TOKEN_LIFETIME_SECONDS = 60 * 60;
-const CACHE_SKEW_SECONDS = 60;
 
 export async function GET() {
   const apiKey = process.env.REACTOR_API_KEY;
@@ -53,14 +52,16 @@ export async function GET() {
       );
     }
 
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    const maxAge = Math.max(
-      0,
-      payload.expires_at - nowSeconds - CACHE_SKEW_SECONDS,
-    );
+    // No HTTP caching: the client decides when a new token is needed.
+    //
+    // A session-scoped JWT is bound to the session it opened. Reuse it for that
+    // whole session (or polling and uploads 403 with "this token is
+    // session-scoped and is not authorized for this resource"), but mint a
+    // fresh one for each new session. The client caches it and invalidates on
+    // connect, so both halves of that hold.
     return NextResponse.json(
-      { jwt: payload.jwt },
-      { headers: { "Cache-Control": `private, max-age=${maxAge}` } },
+      { jwt: payload.jwt, expires_at: payload.expires_at },
+      { headers: { "Cache-Control": "private, no-store" } },
     );
   } catch (error) {
     return NextResponse.json(

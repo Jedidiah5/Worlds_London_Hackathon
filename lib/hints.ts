@@ -16,26 +16,40 @@ export function currentHint(
   state: GameState,
   settings: Settings,
   elapsedThisLoop: number,
+  touch = false,
 ): Hint | null {
   if (!settings.hintsEnabled) return null;
+  const verb = touch ? "TAP SEARCH" : "PRESS E";
 
   // Once you hold the key there is exactly one thing to do, and the app says so
   // until it is done. This is the answer to "nothing tells me how to finish".
   if (state.hasKey) {
     return {
-      text: "GO TO THE LIT DOORWAY AT THE END OF THE CORRIDOR — PRESS E THERE",
+      text: touch
+        ? "GO TO THE LIT DOORWAY AT THE END OF THE CORRIDOR — TAP OPEN THERE"
+        : "GO TO THE LIT DOORWAY AT THE END OF THE CORRIDOR — PRESS E THERE",
       tone: "objective",
     };
   }
 
   if (state.keyVisible) {
-    return { text: "THERE IT IS — PRESS E TO TAKE THE KEY", tone: "objective" };
+    return {
+      text: touch
+        ? "THERE IT IS — TAP TAKE"
+        : "THERE IT IS — PRESS E TO TAKE THE KEY",
+      tone: "objective",
+    };
   }
 
   // First loop is for learning the floor, not for winning.
   if (state.loopNumber < settings.keyMinLoop) {
     if (elapsedThisLoop < 8) {
-      return { text: "W A S D TO WALK · MOVE THE MOUSE TO LOOK", tone: "nudge" };
+      return {
+        text: touch
+          ? "STICK TO WALK · DRAG THE SCREEN TO LOOK"
+          : "W A S D TO WALK · MOVE THE MOUSE TO LOOK",
+        tone: "nudge",
+      };
     }
     if (elapsedThisLoop < 16) {
       return { text: "LOOK AROUND. LEARN THE FLOOR.", tone: "nudge" };
@@ -48,7 +62,10 @@ export function currentHint(
 
   // Eligible loops: teach the search verb, then push them to move on.
   if (state.searchesThisLoop === 0) {
-    return { text: "PRESS E TO SEARCH WHATEVER IS IN FRONT OF YOU", tone: "objective" };
+    return {
+      text: `${verb} TO SEARCH WHATEVER IS IN FRONT OF YOU`,
+      tone: "objective",
+    };
   }
 
   const remaining =
