@@ -1,0 +1,713 @@
+<title>Loop House Shooting Script</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Doto:wght@400..900&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+
+<style>
+  /* The venue's forest-green walls and the brass key, committed to a single
+     dark edit-suite palette. Painted explicitly so it holds on any host. */
+  :root {
+    --ground: #0b0f0d;
+    --surface: #141a17;
+    --surface-2: #1b231e;
+    --line: #2a352d;
+    --ink: #e8e4d8;
+    --ink-dim: #9aa39a;
+    --ink-faint: #6b756c;
+    --brass: #c9a227;
+    --brass-soft: #e0bd4a;
+    --sage: #8ea88c;
+    --dread: #c25a4e;
+
+    --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+    --dot: "Doto", var(--mono);
+
+    --measure: 62ch;
+    --rail: 118px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 15px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 40px 24px 88px;
+  }
+
+  /* ---- Slate ---- */
+
+  .slate {
+    display: grid;
+    gap: 20px;
+    padding-bottom: 28px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .eyebrow {
+    font-size: 10px;
+    letter-spacing: 0.42em;
+    text-transform: uppercase;
+    color: var(--brass);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--dot);
+    font-weight: 800;
+    font-size: clamp(34px, 7vw, 62px);
+    line-height: 0.98;
+    letter-spacing: 0.02em;
+    margin: 0;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+
+  .standfirst {
+    max-width: var(--measure);
+    margin: 0;
+    color: var(--ink-dim);
+  }
+
+  .slate-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .fact {
+    background: var(--surface);
+    padding: 12px 14px;
+    display: grid;
+    gap: 3px;
+  }
+
+  .fact dt {
+    font-size: 9px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  .fact dd {
+    margin: 0;
+    font-size: 14px;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- Sections ---- */
+
+  section { margin-top: 48px; }
+
+  h2 {
+    font-family: var(--dot);
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: 0.06em;
+    margin: 0 0 6px;
+    color: var(--brass);
+  }
+
+  .section-note {
+    max-width: var(--measure);
+    margin: 0 0 22px;
+    color: var(--ink-dim);
+    font-size: 14px;
+  }
+
+  /* ---- Checklist ---- */
+
+  ul.checks {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 10px;
+  }
+
+  ul.checks li {
+    display: grid;
+    grid-template-columns: 18px 1fr;
+    gap: 12px;
+    align-items: start;
+    max-width: var(--measure);
+  }
+
+  ul.checks li::before {
+    content: "";
+    width: 11px;
+    height: 11px;
+    margin-top: 6px;
+    border: 1px solid var(--sage);
+  }
+
+  ul.checks li.critical::before {
+    border-color: var(--dread);
+    background: var(--dread);
+  }
+
+  ul.checks strong { color: var(--ink); font-weight: 600; }
+
+  /* ---- The script itself ---- */
+
+  .shots {
+    display: grid;
+    gap: 1px;
+    background: var(--line);
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .shot {
+    background: var(--ground);
+    display: grid;
+    grid-template-columns: var(--rail) 1fr;
+    gap: 24px;
+    padding: 22px 0;
+  }
+
+  .shot-rail {
+    display: grid;
+    gap: 2px;
+    align-content: start;
+  }
+
+  .tc {
+    font-family: var(--dot);
+    font-weight: 700;
+    font-size: 21px;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .shot-no {
+    font-size: 9px;
+    letter-spacing: 0.26em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  .dur {
+    font-size: 11px;
+    color: var(--brass);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .shot-body { display: grid; gap: 14px; min-width: 0; }
+
+  .shot-title {
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--brass);
+    margin: 0;
+  }
+
+  .block { display: grid; gap: 5px; }
+
+  .block-label {
+    font-size: 9px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  .onscreen {
+    margin: 0;
+    color: var(--sage);
+    max-width: var(--measure);
+  }
+
+  /* The line being read aloud is the thing that matters most on the page. */
+  .vo {
+    margin: 0;
+    max-width: var(--measure);
+    font-size: 17px;
+    line-height: 1.6;
+    color: var(--ink);
+    border-left: 2px solid var(--brass);
+    padding-left: 16px;
+  }
+
+  .vo em {
+    color: var(--brass-soft);
+    font-style: normal;
+  }
+
+  .beat {
+    margin: 0;
+    max-width: var(--measure);
+    font-size: 13px;
+    color: var(--ink-faint);
+    font-style: italic;
+  }
+
+  .hero-shot { background: var(--surface); }
+
+  .hero-shot .shot-title { color: var(--brass-soft); }
+
+  .hero-flag {
+    display: inline-block;
+    font-size: 9px;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--ground);
+    background: var(--brass);
+    padding: 3px 8px;
+    margin-left: 8px;
+    vertical-align: 2px;
+  }
+
+  /* ---- Cut-down table ---- */
+
+  .table-scroll { overflow-x: auto; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 440px;
+    font-size: 14px;
+  }
+
+  th, td {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  th {
+    font-size: 9px;
+    letter-spacing: 0.26em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 400;
+  }
+
+  td { color: var(--ink-dim); }
+  td:first-child { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  .keep { color: var(--sage); }
+  .drop { color: var(--ink-faint); }
+
+  /* ---- Warnings ---- */
+
+  .never {
+    border: 1px solid var(--dread);
+    background: linear-gradient(var(--surface), var(--surface));
+    padding: 20px 22px;
+    display: grid;
+    gap: 12px;
+  }
+
+  .never h3 {
+    margin: 0;
+    font-family: var(--dot);
+    font-size: 17px;
+    letter-spacing: 0.05em;
+    color: var(--dread);
+  }
+
+  .never ul { margin: 0; padding-left: 18px; display: grid; gap: 7px; color: var(--ink-dim); max-width: var(--measure); }
+  .never strong { color: var(--ink); font-weight: 600; }
+
+  footer {
+    margin-top: 56px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line);
+    color: var(--ink-faint);
+    font-size: 12px;
+    max-width: var(--measure);
+  }
+
+  @media (max-width: 680px) {
+    .shot { grid-template-columns: 1fr; gap: 12px; }
+    .shot-rail { grid-auto-flow: column; justify-content: start; align-items: baseline; gap: 12px; }
+    .vo { font-size: 16px; }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .shot { transition: background 200ms ease; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="slate">
+    <p class="eyebrow">Shooting script &middot; for Deen</p>
+    <h1>The Loop House</h1>
+    <p class="standfirst">
+      Two minutes, voiceover over screen capture. The one idea the whole film has
+      to land: this is not a video of a place, it is a place being generated while
+      someone walks through it. Everything else is support.
+    </p>
+    <dl class="slate-facts">
+      <div class="fact"><dt>Runtime</dt><dd>2:00 target</dd></div>
+      <div class="fact"><dt>Shots</dt><dd>8</dd></div>
+      <div class="fact"><dt>Format</dt><dd>1080p MP4</dd></div>
+      <div class="fact"><dt>Category</dt><dd>Narrative</dd></div>
+      <div class="fact"><dt>Audio</dt><dd>VO + app sound</dd></div>
+    </dl>
+  </header>
+
+  <section>
+    <h2>Capture this first</h2>
+    <p class="section-note">
+      Everything below is cut from screen recordings of the app plus one phone
+      clip of the real corridor. Get all of it before editing, because a second
+      capture session means another live model run.
+    </p>
+    <ul class="checks">
+      <li class="critical">
+        <span><strong>Record system audio, not just the mic.</strong> The
+        footsteps, room tone and key chime are generated inside the page. A
+        normal silent screen capture will lose all of it and the film will be
+        half as good.</span>
+      </li>
+      <li>
+        <span><strong>One unbroken take of four loops</strong> — roughly four
+        minutes. This is where the reset and the decay come from, and the loops
+        have to be consecutive to be honest.</span>
+      </li>
+      <li>
+        <span><strong>A clean search</strong>: walk up to furniture, press E,
+        hold on the hands opening the drawer.</span>
+      </li>
+      <li>
+        <span><strong>A key find and a full escape</strong>: the chime, the brass
+        objective banner, the walk to the lit doorway, the white-out, the end
+        card. Let the end card sit for three seconds before you stop recording.</span>
+      </li>
+      <li>
+        <span><strong>Phone clip of the actual corridor</strong> at the venue, shot
+        from standing height looking toward the lit doorway — same framing as the
+        anchor photo. This is the shot that proves the trick.</span>
+      </li>
+      <li>
+        <span><strong>Browser full screen</strong>, no bookmarks bar, no tabs.
+        Debug panel off, settings closed.</span>
+      </li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Script</h2>
+    <p class="section-note">
+      Timecodes are targets, not gospel. <span style="color:var(--brass)">Brass</span>
+      lines are read aloud; sage lines are what the viewer is looking at.
+    </p>
+
+    <div class="shots">
+
+      <article class="shot">
+        <div class="shot-rail">
+          <span class="tc">0:00</span>
+          <span class="shot-no">Shot 01</span>
+          <span class="dur">10 sec</span>
+        </div>
+        <div class="shot-body">
+          <p class="shot-title">Cold open</p>
+          <div class="block">
+            <span class="block-label">On screen</span>
+            <p class="onscreen">
+              Black, three seconds, room tone already running. First generated
+              frame fades up: the green corridor, hanging ferns, the lit doorway
+              at the far end. HUD reads LOOP 01 &middot; 09:00 &middot; 01:00.
+            </p>
+          </div>
+          <div class="block">
+            <span class="block-label">Voiceover</span>
+            <p class="vo">
+              This is the building we are standing in. Not a photograph of it.
+              Not a 3D model of it. It is being generated, frame by frame, right
+              now.
+            </p>
+          </div>
+        </div>
+      </article>
+
+      <article class="shot">
+        <div class="shot-rail">
+          <span class="tc">0:10</span>
+          <span class="shot-no">Shot 02</span>
+          <span class="dur">15 sec</span>
+        </div>
+        <div class="shot-body">
+          <p class="shot-title">The anchor</p>
+          <div class="block">
+            <span class="block-label">On screen</span>
+            <p class="onscreen">
+              Split screen. Left: the phone photo of the real corridor, held
+              still. Right: live generated frames of the same corridor, moving.
+              Hold the split long enough that the viewer matches the two.
+            </p>
+          </div>
+          <div class="block">
+            <span class="block-label">Voiceover</span>
+            <p class="vo">
+              We gave a world model one photograph of this floor. Everything you
+              are about to see is derived from that single image, live. There are
+              no 3D assets. Nothing was rendered in advance.
+            </p>
+          </div>
+        </div>
+      </article>
+
+      <article class="shot">
+        <div class="shot-rail">
+          <span class="tc">0:25</span>
+          <span class="shot-no">Shot 03</span>
+          <span class="dur">20 sec</span>
+        </div>
+        <div class="shot-body">
+          <p class="shot-title">It answers to you</p>
+          <div class="block">
+            <span class="block-label">On screen</span>
+            <p class="onscreen">
+              Screen capture with a small keystroke overlay in the corner.
+              Walking the corridor, then a mouse pan across the seating booths.
+              Footsteps clearly audible. Cut to a search: hands come into frame
+              and open a drawer.
+            </p>
+          </div>
+          <div class="block">
+            <span class="block-label">Voiceover</span>
+            <p class="vo">
+              You walk it. The camera answers the mouse. The floor answers your
+              feet. Reach out, and your own hands come into frame.
+            </p>
+          </div>
+          <p class="beat">
+            Beat — hold two seconds on the hands with no narration. Let the
+            drawer sound carry it.
+          </p>
+        </div>
+      </article>
+
+      <article class="shot hero-shot">
+        <div class="shot-rail">
+          <span class="tc">0:45</span>
+          <span class="shot-no">Shot 04</span>
+          <span class="dur">22 sec</span>
+        </div>
+        <div class="shot-body">
+          <p class="shot-title">The reset <span class="hero-flag">the whole film</span></p>
+          <div class="block">
+            <span class="block-label">On screen</span>
+            <p class="onscreen">
+              The clock ticking down: 00:03, 00:02, 00:01 — stay on the HUD. Cut
+              to black. The card: <em style="color:var(--ink);font-style:normal">You wake up. Again.</em>
+              Then LOOP 02. The corridor returns: same geometry, same doorway,
+              but dimmer, ambers gone cold, the ferns visibly longer.
+            </p>
+          </div>
+          <div class="block">
+            <span class="block-label">Voiceover</span>
+            <p class="vo">
+              Every sixty seconds, you wake up back at the start. Same building.
+              Same seed. Same photograph.
+            </p>
+          </div>
+          <p class="beat">
+            Beat — four full seconds of silence across the black card and the
+            return. Do not talk over the reset. This is the shot the whole entry
+            rests on.
+          </p>
+          <div class="block">
+            <span class="block-label">Voiceover</span>
+            <p class="vo">
+              That was nine in the morning. This is after hours.
+            </p>
+          </div>
+        </div>
+      </article>
+
+      <article class="shot">
+        <div class="shot-rail">
+          <span class="tc">1:07</span>
+          <span class="shot-no">Shot 05</span>
+          <span class="dur">20 sec</span>
+        </div>
+        <div class="shot-body">
+          <p class="shot-title">It decays</p>
+          <div class="block">
+            <span class="block-label">On screen</span>
+            <p class="onscreen">
+              Fast cuts, three or four seconds each: LOOP 03 with the strip
+              lights stuttering; LOOP 04 overgrown, the corridor choked with
+              growth. Let the room tone darken with them — it is already mixed to.
+            </p>
+          </div>
+          <div class="block">
+            <span class="block-label">Voiceover</span>
+            <p class="vo">
+              The lights fail. The plants take the building. By the fourth loop
+              you are walking through something that used to be an office.
+            </p>
+          </div>
+          <div class="block">
+            <span class="block-label">Voiceover</span>
+            <p class="vo">
+              A video model hands you a clip that already decided all of this. A
+              world model re-derives the same place, live &mdash; and lets it rot.
+            </p>
+          </div>
+        </div>
+      </article>
+
+      <article class="shot">
+        <div class="shot-rail">
+          <span class="tc">1:27</span>
+          <span class="shot-no">Shot 06</span>
+          <span class="dur">16 sec</span>
+        </div>
+        <div class="shot-body">
+          <p class="shot-title">The key</p>
+          <div class="block">
+            <span class="block-label">On screen</span>
+            <p class="onscreen">
+              The drawer opens, the brass key catches the light, the chime lands,
+              a hand lifts it. Cut to the brass objective banner appearing across
+              the bottom of the screen.
+            </p>
+          </div>
+          <div class="block">
+            <span class="block-label">Voiceover</span>
+            <p class="vo">
+              There is a key. You will not find it on your first loop. And if you
+              are too slow, the loop takes it back off you.
+            </p>
+          </div>
+        </div>
+      </article>
+
+      <article class="shot">
+        <div class="shot-rail">
+          <span class="tc">1:43</span>
+          <span class="shot-no">Shot 07</span>
+          <span class="dur">14 sec</span>
+        </div>
+        <div class="shot-body">
+          <p class="shot-title">Out</p>
+          <div class="block">
+            <span class="block-label">On screen</span>
+            <p class="onscreen">
+              Walking the length of the corridor toward the lit doorway. The door
+              opens, white floods in, the frame blows out to pure white, and the
+              cream end card lands: <em style="color:var(--ink);font-style:normal">You left the building</em>
+              with the loop count and time inside.
+            </p>
+          </div>
+          <div class="block">
+            <span class="block-label">Voiceover</span>
+            <p class="vo">
+              Find it, reach the door, and you get out.
+            </p>
+          </div>
+          <p class="beat">
+            Beat — no narration over the white-out or the end card. Let the wash
+            of sound do it, and hold the card for three seconds.
+          </p>
+        </div>
+      </article>
+
+      <article class="shot">
+        <div class="shot-rail">
+          <span class="tc">1:57</span>
+          <span class="shot-no">Shot 08</span>
+          <span class="dur">13 sec</span>
+        </div>
+        <div class="shot-body">
+          <p class="shot-title">Tag</p>
+          <div class="block">
+            <span class="block-label">On screen</span>
+            <p class="onscreen">
+              End card holds, then the title: THE LOOP HOUSE. Underneath, small:
+              built on Reactor LingBot World 2 &middot; Worlds London 2026.
+            </p>
+          </div>
+          <div class="block">
+            <span class="block-label">Voiceover</span>
+            <p class="vo">
+              The model owns the world. Our code owns the truth &mdash; the timer,
+              the key, and what you remember. That split is why it runs.
+            </p>
+          </div>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>If it has to be sixty seconds</h2>
+    <p class="section-note">
+      Some submission forms cap the runtime. Cut in this order and the argument
+      still stands, because the reset survives.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Shot</th><th>What it is</th><th>60-second cut</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>01</td><td>Cold open</td><td class="keep">Keep — trim to 6s</td></tr>
+          <tr><td>02</td><td>The anchor</td><td class="keep">Keep — trim to 10s</td></tr>
+          <tr><td>03</td><td>It answers to you</td><td class="keep">Keep — hands only, 10s</td></tr>
+          <tr><td>04</td><td>The reset</td><td class="keep">Keep in full. Never cut this.</td></tr>
+          <tr><td>05</td><td>It decays</td><td class="keep">Keep — one cut to LOOP 04 only</td></tr>
+          <tr><td>06</td><td>The key</td><td class="drop">Drop</td></tr>
+          <tr><td>07</td><td>Out</td><td class="keep">Keep — white-out and card, 8s</td></tr>
+          <tr><td>08</td><td>Tag</td><td class="drop">Drop VO, keep title card</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Delivery</h2>
+    <ul class="checks">
+      <li><span><strong>Burn in captions.</strong> Assume a judge watches it
+        muted the first time. The VO lines above are the caption text.</span></li>
+      <li><span><strong>1080p, MP4, under 2:10.</strong> Keep the app audio
+        under the voiceover rather than replacing it.</span></li>
+      <li><span><strong>No music bed</strong> unless it is very quiet. The room
+        tone and footsteps are doing real work and a track will bury them.</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <div class="never">
+      <h3>Never on camera</h3>
+      <ul>
+        <li><strong>The debug panel.</strong> Backtick toggles it. Check it is
+          off before recording, not after.</li>
+        <li><strong>The settings panel.</strong> Useful live, wrong on film.</li>
+        <li><strong>Any error or queue screen</strong> — "Every GPU is busy",
+          "Too many sessions this minute". True, handled, and not the story.</li>
+        <li><strong>A loop where the world drifts badly.</strong> It happens
+          after long fast walking. Reshoot rather than explain it.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    Beats matter more than words here. The three silences — on the hands, across
+    the reset, and over the white-out — are what make it feel like a place rather
+    than a demo. If something has to go to hit the runtime, cut narration before
+    you cut a beat.
+  </footer>
+
+</div>
