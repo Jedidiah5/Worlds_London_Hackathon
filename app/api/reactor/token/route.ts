@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 
 const MODEL_NAME = "reactor/lingbot-world-2";
-const MAX_SESSIONS = 10;
+// max_sessions is the total this token may EVER create — closing a session does
+// not give the quota back. A demo that restarts a lot burns through a small
+// number fast, and running out looks like a mystery failure, so keep it roomy.
+const MAX_SESSIONS = 200;
 const TOKEN_LIFETIME_SECONDS = 60 * 60;
 
 export async function GET() {

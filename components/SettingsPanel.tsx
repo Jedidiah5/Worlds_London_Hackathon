@@ -79,6 +79,36 @@ export function SettingsPanel({
           </Row>
 
           <Row
+            label="Move speed"
+            hint={
+              settings.moveSpeed === 1
+                ? "walk"
+                : settings.moveSpeed === 2
+                  ? "brisk"
+                  : "fast"
+            }
+          >
+            <input
+              type="range"
+              min={1}
+              max={3}
+              step={1}
+              value={settings.moveSpeed}
+              onChange={(e) =>
+                onChange({ moveSpeed: Number(e.target.value) as 1 | 2 | 3 })
+              }
+            />
+          </Row>
+
+          <Row label="Show your hands" hint="first-person arms">
+            <input
+              type="checkbox"
+              checked={settings.showHands}
+              onChange={(e) => onChange({ showHands: e.target.checked })}
+            />
+          </Row>
+
+          <Row
             label="Mouse sensitivity"
             hint={settings.mouseSensitivity.toFixed(1)}
           >

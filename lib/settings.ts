@@ -14,6 +14,8 @@ export type Settings = {
   tiltEnabled: boolean; // phone tilt steers left/right
   tiltSensitivity: number; // 0.2 – 3.0
   touchControls: "auto" | "on" | "off";
+  moveSpeed: 1 | 2 | 3; // walking pace: prompt wording + camera-pose push
+  showHands: boolean; // render the player's own hands in first person
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -29,6 +31,8 @@ export const DEFAULT_SETTINGS: Settings = {
   tiltEnabled: false,
   tiltSensitivity: 1,
   touchControls: "auto",
+  moveSpeed: 2,
+  showHands: true,
 };
 
 const STORAGE_KEY = "loop-house-settings";

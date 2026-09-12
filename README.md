@@ -165,6 +165,38 @@ explicitly invalidated with `invalidateToken()` immediately before each
 `connect()`. The route sends `Cache-Control: private, no-store` so the browser
 never second-guesses that. One token per session, a new token per session.
 
+### Movement speed, and what it costs
+
+LingBot has no speed parameter — `set_move_longitudinal` is just a direction. So
+pace is carried two ways: the prompt wording (`PACE_PROMPTS` in `lib/world.ts`,
+walk / brisk / fast) and a small per-latent forward translation on the camera
+pose (`MOVE_PUSH_PER_STEP`). Pushing the thumbstick to its edge bumps one pace
+step above the setting, so mobile has a way to hurry.
+
+**The trade-off is real and worth knowing before you demo.** The faster the
+viewer moves, the faster the world drifts away from the anchor frame — walk hard
+for ten seconds and the venue can dissolve into somewhere else entirely. The
+60-second loop is the natural cure, because every reset re-anchors from the same
+photo. If a judge is wandering fast and it starts looking wrong, that is a
+feature you can name out loud ("loop four gets strange") or you can drop
+**Move speed** to `walk` in settings.
+
+### Your hands
+
+`showHands` puts the player's own arms in frame, and the search and take-key
+events are written around them — the hands reach in, open the drawer, and lift
+the key. Two things make this work:
+
+1. The camera contract is obsessive about the count ("exactly two hands, five
+   fingers each, never a third hand or a detached limb"), because that is what
+   a world model gets wrong.
+2. Event prompts **lead** the composed prompt under `HAPPENING RIGHT NOW:`.
+   Buried after four contract paragraphs, the model ignored them entirely and no
+   hands ever appeared.
+
+If the anatomy goes wrong on the day, **Show your hands** in settings turns it
+off and restores the old bodiless camera without a code change.
+
 ### Walls
 
 A world model has no collision system, so this is approximated two ways, and

@@ -39,18 +39,26 @@ import {
 
 const API_URL =
   process.env.NEXT_PUBLIC_COORDINATOR_URL ?? "https://api.reactor.inc";
+const CHUNK_LATENTS = 3;
+// Forward translation added per pace step above 1. Deliberately small: the
+// prompt does most of the work, and physically shoving the camera makes the
+// world drift away from the anchor faster. Raise with care.
+const MOVE_PUSH_PER_STEP = 0.04;
+
 type MoveLong = "idle" | "forward" | "back";
 type MoveLat = "idle" | "strafe_left" | "strafe_right";
 type LookH = "idle" | "left" | "right";
 type LookV = "idle" | "up" | "down";
 
-// One token per session, and a new one for each new session.
+// One token for the whole page load.
 //
-// The SDK asks for a JWT more than once (connect, upload slots, session polls).
-// A session-scoped token is bound to the session it opened, so handing out a
-// different token mid-session 403s those calls — and reusing an old token
-// against a freshly created session 403s too. Caching here with an explicit
-// invalidation on connect satisfies both.
+// A Reactor token is authorized for the sessions IT created. The SDK will also
+// happily adopt a pre-existing live session ("Adopted session (not the
+// creator)") — and uploads against a session this token did not create fail
+// with "403 this token is session-scoped and is not authorized for this
+// resource". So the rule is: keep one stable token, and when that 403 does
+// appear, throw the session away and reconnect with a brand new token that
+// will own what it creates.
 let cachedToken: { jwt: string; expiresAtMs: number } | null = null;
 let inflightToken: Promise<string> | null = null;
 const TOKEN_SKEW_MS = 60_000;
@@ -157,8 +165,17 @@ function isCapacityError(error: unknown): boolean {
 // retrying the whole boot rather than showing a judge an error.
 const TRANSPORT_ATTEMPTS = 3;
 
+// The session-binding 403. Recoverable, but only by dropping the session and
+// reconnecting with a fresh token — retrying the upload alone never works.
+function isSessionBindingError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("403") && message.includes("session-scoped")
+  );
+}
+
 function isTransientError(error: unknown): boolean {
-  if (isCapacityError(error)) return true;
+  if (isCapacityError(error) || isSessionBindingError(error)) return true;
   const message = (
     error instanceof Error ? error.message : String(error)
   ).toLowerCase();
@@ -232,6 +249,8 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
   const promptInFlightRef = useRef(false);
   const attnRef = useRef<"small" | "large">("small");
   const lastRotationSpeedRef = useRef(-1);
+  const effectivePaceRef = useRef<1 | 2 | 3>(DEFAULT_SETTINGS.moveSpeed);
+  const movePoseActiveRef = useRef(false);
 
   const samplerRef = useRef<ReturnType<typeof createFrameSampler> | null>(null);
   const stallCountRef = useRef(0);
@@ -303,6 +322,8 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
       keyVisible: state.keyVisible,
       takeActive: takeChunksRef.current > 0,
       escaping: escapingRef.current,
+      showHands: settingsRef.current.showHands,
+      pace: effectivePaceRef.current,
     });
   }, []);
 
@@ -393,6 +414,35 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     [lw2],
   );
 
+  // Movement speed boost.
+  //
+  // LingBot has no speed parameter — set_move_longitudinal is just a direction.
+  // Pace is carried mainly by the prompt wording, and reinforced here with a
+  // small per-latent forward translation on the camera pose. At pace 1 no pose
+  // is sent at all, so this can always be dialled back out.
+  const sendMovePose = useCallback(() => {
+    if (statusRef.current !== "ready" || gameRef.current.phase !== "loop") return;
+    const pace = effectivePaceRef.current;
+    const forward = lastMoveLongRef.current;
+    const push = pace === 1 ? 0 : (pace - 1) * MOVE_PUSH_PER_STEP;
+    const active = push > 0 && forward !== "idle" && !blockedRef.current;
+    if (!active) {
+      if (movePoseActiveRef.current) {
+        lw2.setCameraPose({ camera_pose: [] }).catch(() => undefined);
+        movePoseActiveRef.current = false;
+      }
+      return;
+    }
+    // [rx, ry, rz, tx, ty, tz]; tz is the forward axis, negative when backing up.
+    const tz = forward === "forward" ? push : -push;
+    const pose: number[] = [];
+    for (let i = 0; i < CHUNK_LATENTS; i += 1) pose.push(0, 0, 0, 0, 0, tz);
+    lw2.setCameraPose({ camera_pose: pose }).catch(() => undefined);
+    movePoseActiveRef.current = true;
+  }, [lw2]);
+  const sendMovePoseRef = useRef(sendMovePose);
+  sendMovePoseRef.current = sendMovePose;
+
   const clearBlocked = useCallback(() => {
     if (!blockedRef.current) return;
     blockedRef.current = false;
@@ -404,7 +454,8 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     if (statusRef.current !== "ready") return;
     // The thumbstick wins while it is being held; otherwise the keyboard.
     const stick = touchMoveRef.current;
-    const STICK_DEADZONE = 0.34;
+    // Low deadzone so the stick bites early — it felt sluggish at 0.34.
+    const STICK_DEADZONE = 0.2;
     const stickLong: MoveLong =
       stick.y > STICK_DEADZONE
         ? "forward"
@@ -436,10 +487,23 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
       changed = true;
       lw2.setMoveLateral({ move_lateral: moveLat }).catch(() => undefined);
     }
+    // Pushing the stick to its edge is an explicit "go faster" — bump a pace
+    // step above the setting so mobile has a way to hurry.
+    const stickMagnitude = Math.hypot(stick.x, stick.y);
+    const basePace = settingsRef.current.moveSpeed;
+    const nextPace = (
+      stickMagnitude > 0.85 ? Math.min(3, basePace + 1) : basePace
+    ) as 1 | 2 | 3;
+    if (nextPace !== effectivePaceRef.current) {
+      effectivePaceRef.current = nextPace;
+      changed = true;
+    }
+
     const moving = moveLong !== "idle" || moveLat !== "idle";
     if (moving !== movingRef.current) {
       movingRef.current = moving;
       changed = true;
+      sendMovePoseRef.current();
     }
     setAttention(
       moving || searchChunksRef.current > 0 || takeChunksRef.current > 0
@@ -471,6 +535,10 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     lw2.setLookVertical({ look_vertical: "idle" }).catch(() => undefined);
     touchMoveRef.current = { x: 0, y: 0 };
     lookRef.current.reset();
+    if (movePoseActiveRef.current) {
+      lw2.setCameraPose({ camera_pose: [] }).catch(() => undefined);
+      movePoseActiveRef.current = false;
+    }
   }, [clearBlocked, lw2]);
 
   // Upload the anchor, condition the model for the given loop, and start.
@@ -515,6 +583,8 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
         keyVisible: false,
         takeActive: false,
         escaping: false,
+        showHands: settingsRef.current.showHands,
+        pace: settingsRef.current.moveSpeed,
       });
       lastPromptRef.current = prompt;
       promptQueuedRef.current = null;
@@ -557,9 +627,6 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
       for (let attempt = 1; attempt <= TRANSPORT_ATTEMPTS; attempt += 1) {
         try {
           setBootMessage("Connecting…");
-          // Each new session needs its own token; the old one is bound to a
-          // session that no longer exists.
-          invalidateToken();
           let connectError: unknown = null;
           for (let tries = 1; tries <= CAPACITY_ATTEMPTS; tries += 1) {
             if (statusRef.current !== "disconnected") break;
@@ -602,9 +669,18 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
           break;
         } catch (error) {
           if (attempt === TRANSPORT_ATTEMPTS || !isTransientError(error)) throw error;
-          setBootMessage(
-            `Connection dropped. Retrying… (${attempt}/${TRANSPORT_ATTEMPTS})`,
-          );
+          if (isSessionBindingError(error)) {
+            // We adopted someone else's session. Drop it and take a new token
+            // so the next session is one we own.
+            setBootMessage(
+              `Session handover. Starting a clean one… (${attempt}/${TRANSPORT_ATTEMPTS})`,
+            );
+            invalidateToken();
+          } else {
+            setBootMessage(
+              `Connection dropped. Retrying… (${attempt}/${TRANSPORT_ATTEMPTS})`,
+            );
+          }
           await lw2.disconnect().catch(() => undefined);
           await delay(2500);
         }
@@ -641,7 +717,34 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
         "The floor did not come back in time.",
       );
     } catch (error) {
-      failToError(error, "The loop could not restart.");
+      // A reset failing must not end the demo. Rebuild the session from
+      // scratch and carry on at the same loop number — the player should only
+      // notice a slightly longer blackout.
+      if (!isTransientError(error)) {
+        failToError(error, "The loop could not restart.");
+        resetPendingRef.current = false;
+        return;
+      }
+      try {
+        setBootMessage("The building is slow to come back…");
+        if (isSessionBindingError(error)) invalidateToken();
+        await lw2.disconnect().catch(() => undefined);
+        await delay(1500);
+        await lw2.connect();
+        await waitFor(
+          () => statusRef.current === "ready",
+          120_000,
+          "The world session did not become ready in time.",
+        );
+        await stageAndStart(nextLoop);
+        await waitFor(
+          () => gameRef.current.phase === "loop",
+          120_000,
+          "The floor did not come back in time.",
+        );
+      } catch (retryError) {
+        failToError(retryError, "The loop could not restart.");
+      }
     } finally {
       resetPendingRef.current = false;
     }
@@ -714,6 +817,8 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
       }
       case "chunk_complete":
         setChunkIndex(message.chunk_index);
+        // Pose is a per-chunk buffer, so a sustained push has to be re-sent.
+        sendMovePoseRef.current();
         if (searchChunksRef.current > 0) {
           searchChunksRef.current -= 1;
           if (searchChunksRef.current === 0) {

@@ -81,6 +81,11 @@ If they don't find it: hit `` ` `` → **grant key** → **escape now**, and say
   being weird — dread is the product.
 - **Mouse look feels inverted:** gear icon → **Invert look Y**. Do it while
   talking; it applies immediately.
+- **The world drifts somewhere that isn't the venue:** they walked fast for a
+  while. The next reset re-anchors it. Either wait it out, or drop **Move
+  speed** to `walk` in settings.
+- **The hands come out wrong:** gear icon → **Show your hands** off. The camera
+  goes back to bodiless and nothing else changes.
 - **"That way is solid" fires when it shouldn't:** gear icon → turn off
   **Wall feedback**.
 - **Total failure:** the title screen alone is a legible artefact. Talk them
