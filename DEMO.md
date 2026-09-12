@@ -89,9 +89,20 @@ If they don't find it: hit `` ` `` → **grant key** → **escape now**, and say
   being weird — dread is the product.
 - **Mouse look feels inverted:** gear icon → **Invert look Y**. Do it while
   talking; it applies immediately.
-- **The world drifts somewhere that isn't the venue:** they walked fast for a
-  while. The next reset re-anchors it. Either wait it out, or drop **Move
-  speed** to `walk` in settings.
+- **The world drifts somewhere that isn't the venue:** they held a turn or a
+  walk down for a long stretch. The next reset re-anchors it. Either wait it
+  out, or drop **Move speed** to `walk` in settings.
+
+### How to hold the world together while someone else drives
+
+Short inputs. That is the whole technique, and it is worth saying out loud as
+you hand over the keyboard:
+
+> Tap rather than hold — it keeps its footing better that way.
+
+Taps of W and short turns let the model settle between moves and the building
+stays put. Long held turns are what rebuild the room as somewhere else. If a
+judge grabs the mouse and spins, expect drift, and let the next reset fix it.
 - **The hands come out wrong:** gear icon → **Show your hands** off. The camera
   goes back to bodiless and nothing else changes.
 - **"That way is solid" fires when it shouldn't:** gear icon → turn off

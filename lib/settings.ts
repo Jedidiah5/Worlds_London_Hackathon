@@ -25,7 +25,9 @@ export const DEFAULT_SETTINGS: Settings = {
   loopSeconds: 60,
   mouseSensitivity: 1,
   invertY: false,
-  lookSpeedDeg: 4.5,
+  // Degrees of turn per latent frame. Reactor's prompt guide asks for
+  // <= ~0.05 rad/frame (~2.9 deg) because rotation compounds and drives drift.
+  lookSpeedDeg: 2.5,
   hintsEnabled: true,
   keyMinLoop: 2,
   keySearchIndex: 2,
@@ -34,7 +36,9 @@ export const DEFAULT_SETTINGS: Settings = {
   tiltEnabled: false,
   tiltSensitivity: 1,
   touchControls: "auto",
-  moveSpeed: 3,
+  // Faster movement generates more novel views and drifts off the anchor
+  // sooner. Brisk is the compromise that still reads as the same building.
+  moveSpeed: 2,
   showHands: true,
   headBob: true,
   soundEnabled: true,

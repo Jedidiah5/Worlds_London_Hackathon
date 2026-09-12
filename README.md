@@ -215,6 +215,42 @@ continuous floor running unbroken to the base of every wall, that it never opens
 into a hole, void, water or darkness, and that the bottom of the frame is always
 ground.
 
+### Spatial persistence — read this before tuning anything
+
+The world staying put when you look away is the hardest thing here, and it is
+worth being clear about what is achievable. LingBot World 2 has an **attention
+window over recent frames, not a 3D model of the room.** It can hold a place
+across a glance; it cannot hold one across a long exploration the way a game
+engine would. Everything below reduces the failure rate. None of it makes the
+guarantee absolute, and no prompt wording will.
+
+Four things are tuned for persistence, in rough order of how much they matter:
+
+1. **`attn_window` is locked to `"large"` for the whole session.** It used to
+   drop to `"small"` whenever the player stood still — copied from an example
+   tuned for responsiveness. Reactor's schema docs say the small window "may
+   lose context when the camera pans away and back to the same location", which
+   is precisely the bug. Standing still and looking around is exactly when the
+   model needs the wider window.
+2. **Turning is pulsed, not held.** The prompt guide asks you to "keep holds
+   brief; keep the world settled between them", because an unbroken hold makes
+   the model condition on its own drifting output. A held turn now runs ~0.9s
+   then forces ~0.6s of settle, repeatedly, however long the key is down.
+   Turning is a little steppier and the room survives being left.
+3. **Turn speed is capped at 4°/latent frame** (`ROT_MAX_DEG`), default 2.5.
+   The guide asks for ≤ ~0.05 rad/frame — about 2.9°. The old default of 4.5,
+   scaling up to the API's maximum of 30 on a fast flick, compounded into
+   exactly the "I turned back and it was a different room" failure.
+4. **`kv_cache_reset` is left on `"auto"`.** Tempting to disable, but the docs
+   warn that `"off"` lets RoPE positions grow unbounded and quality drifts on
+   long runs. `trigger_kv_cache_reset` is for deliberate scene cuts only and
+   would make this worse, not better.
+
+**The loop reset is the real persistence mechanism.** Every 60 seconds the app
+re-anchors from the same photograph, which bounds how far any single loop can
+wander. That is not a workaround bolted onto the story — it is why the story and
+the technology are the same thing.
+
 ### Movement speed, and what it costs
 
 LingBot has no speed parameter — `set_move_longitudinal` is just a direction. So

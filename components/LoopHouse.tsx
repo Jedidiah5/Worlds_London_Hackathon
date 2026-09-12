@@ -41,12 +41,22 @@ import {
 const API_URL =
   process.env.NEXT_PUBLIC_COORDINATOR_URL ?? "https://api.reactor.inc";
 const CHUNK_LATENTS = 3;
-// Forward translation added per pace step above 1. The prompt does most of the
-// work; this is the part you feel. Raising it also drifts off the anchor faster.
-const MOVE_PUSH_PER_STEP = 0.055;
+// Forward translation added per pace step above 1. Kept small on purpose:
+// Reactor's guide says translation magnitude is normalised away (duration is
+// what shapes a move), so a big value buys almost no extra speed while
+// generating novel views faster and pulling the world off its anchor.
+const MOVE_PUSH_PER_STEP = 0.022;
 // Constant upward nudge (y is down) that cancels the model's tendency to sink
 // toward the floor while walking.
 const EYE_LIFT = 0.014;
+// Ceiling on degrees of turn per latent frame. Reactor's guide asks for
+// <= ~0.05 rad/frame (~2.9 deg); a little headroom for a deliberate flick,
+// nowhere near the API's 30 maximum.
+const ROT_MAX_DEG = 4;
+// Turn/settle pulse, counted in 100ms look ticks: ~0.9s of turning, then ~0.6s
+// for the world to settle before turning resumes.
+const TURN_TICKS = 9;
+const SETTLE_TICKS = 6;
 // Gait bob amplitude and how fast the phase advances per latent frame.
 const BOB_BASE = 0.006;
 const BOB_PER_PACE = 0.0035;
@@ -221,7 +231,12 @@ function isTransientError(error: unknown): boolean {
     message.includes("transport") ||
     message.includes("connection") ||
     message.includes("dropped") ||
-    message.includes("did not become ready")
+    message.includes("did not become ready") ||
+    // Reactor's upload service stalls under load and the anchor never lands.
+    // Worth another go on a fresh session rather than ending the run.
+    message.includes("was not accepted in time") ||
+    message.includes("fetch failed") ||
+    message.includes("did not return its first frame")
   );
 }
 
@@ -285,11 +300,13 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
   const lastPromptRef = useRef("");
   const promptQueuedRef = useRef<string | null>(null);
   const promptInFlightRef = useRef(false);
-  const attnRef = useRef<"small" | "large">("small");
+  const attnRef = useRef<"small" | "large">("large");
   const lastRotationSpeedRef = useRef(-1);
   const effectivePaceRef = useRef<1 | 2 | 3 | 4>(DEFAULT_SETTINGS.moveSpeed);
   const movePoseActiveRef = useRef(false);
   const bobPhaseRef = useRef(0);
+  const turnHoldRef = useRef(0);
+  const settleLeftRef = useRef(0);
 
   const samplerRef = useRef<ReturnType<typeof createFrameSampler> | null>(null);
   const stallCountRef = useRef(0);
@@ -414,6 +431,14 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     [composeCurrentPrompt, dispatchPrompt],
   );
 
+  // Attention window is locked to "large" for the whole session.
+  //
+  // This used to flip to "small" whenever the player stood still, copied from
+  // an example tuned for responsiveness. Per Reactor's schema docs the small
+  // window "may lose context when the camera pans away and back to the same
+  // location" — which is exactly the bug where turning around rebuilt the room
+  // differently. Large costs compute and buys spatial memory, and spatial
+  // memory is the entire premise here.
   const setAttention = useCallback(
     (next: "small" | "large") => {
       if (attnRef.current === next) return;
@@ -574,11 +599,10 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
     if (settingsRef.current.soundEnabled) {
       audioRef.current?.setWalking(moving && !blockedRef.current, nextPace);
     }
-    setAttention(
-      moving || searchChunksRef.current > 0 || takeChunksRef.current > 0
-        ? "large"
-        : "small",
-    );
+    // Deliberately NOT narrowed to "small" when standing still — see the note
+    // on setAttention. Standing still and looking around is precisely when the
+    // player needs the model to remember the room.
+    setAttention("large");
     if (changed) {
       samplerRef.current?.reset();
       stallCountRef.current = 0;
@@ -635,8 +659,8 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
       ]);
       setBootMessage("Conditioning the loop…");
       await lw2.setSeed({ seed: SEED });
-      await lw2.setAttnWindow({ attn_window: "small" });
-      attnRef.current = "small";
+      await lw2.setAttnWindow({ attn_window: "large" });
+      attnRef.current = "large";
       escapingRef.current = false;
       searchChunksRef.current = 0;
       takeChunksRef.current = 0;
@@ -993,12 +1017,46 @@ function LoopHouseGame({ configured }: { configured: boolean }) {
         intensity = Math.max(intensity, Math.min(1, Math.abs(py) / PIXEL_FULL));
       }
 
+      // Sustained turning is what destroys the room.
+      //
+      // Reactor's guide: "Keep holds brief; keep the world settled between
+      // them" — an unbroken hold makes the model condition on its own drifting
+      // output, and a few seconds of continuous rotation rebuilds the scene as
+      // somewhere else. So a held turn is broken into pulses: turn for
+      // TURN_TICKS, then force idle for SETTLE_TICKS so the world can settle,
+      // even while the key or mouse is still going. Turning is slightly
+      // steppier; the building survives being looked away from.
+      const turning = lookH !== "idle" || lookV !== "idle";
+      if (turning) {
+        turnHoldRef.current += 1;
+      } else {
+        turnHoldRef.current = 0;
+        settleLeftRef.current = 0;
+      }
+      if (settleLeftRef.current > 0) {
+        settleLeftRef.current -= 1;
+        applyLook("idle", "idle", settings.lookSpeedDeg);
+        return;
+      }
+      if (turnHoldRef.current >= TURN_TICKS) {
+        turnHoldRef.current = 0;
+        settleLeftRef.current = SETTLE_TICKS;
+        applyLook("idle", "idle", settings.lookSpeedDeg);
+        return;
+      }
+
       // Scale turn speed with how hard the player moved, around their setting.
+      //
+      // Capped hard at ROT_MAX_DEG. Reactor's prompt guide asks for rotation
+      // "gentle (peak <= ~0.05 rad/frame)" — about 2.9 deg/frame — because
+      // rotation compounds frame to frame. Letting a fast mouse flick run to
+      // 30 deg/frame was a direct cause of the room being different when you
+      // turned back to it.
       const base = settings.lookSpeedDeg;
       const speed =
         lookH === "idle" && lookV === "idle"
           ? base
-          : Math.min(30, Math.max(1, base * (0.45 + intensity * 1.6)));
+          : Math.min(ROT_MAX_DEG, Math.max(0.8, base * (0.5 + intensity * 1.1)));
       applyLook(lookH, lookV, speed);
     }, LOOK_TICK_MS);
     return () => window.clearInterval(timer);

@@ -159,11 +159,14 @@ export function SettingsPanel({
             />
           </Row>
 
-          <Row label="Turn speed" hint={`${settings.lookSpeedDeg.toFixed(1)}°`}>
+          <Row
+            label="Turn speed"
+            hint={`${settings.lookSpeedDeg.toFixed(1)}° · high = drift`}
+          >
             <input
               type="range"
               min={1}
-              max={15}
+              max={8}
               step={0.5}
               value={settings.lookSpeedDeg}
               onChange={(e) => onChange({ lookSpeedDeg: Number(e.target.value) })}
